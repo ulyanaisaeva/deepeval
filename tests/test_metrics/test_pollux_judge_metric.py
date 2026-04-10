@@ -3,6 +3,7 @@ import os
 import pytest
 
 from deepeval.metrics import PolluxJudgeMetric
+from deepeval.metrics.pollux import POLLUX_TAGGED_FEEDBACK_RE, POLLUX_TAGGED_SCORE_RE
 from deepeval.test_case import LLMTestCase
 
 
@@ -78,6 +79,42 @@ class TestPolluxJudgeMetric:
         monkeypatch.setattr(
             metric,
             "_get_sync_client",
+            lambda: _build_sync_client("2"),
+        )
+
+        score = metric.measure(_test_case())
+
+        assert score == 1.0
+        assert metric.reason == ""
+        assert metric.is_successful()
+
+    def test_sync_measure_include_reason_false(self, monkeypatch):
+        metric = PolluxJudgeMetric(
+            criteria_name="Correctness",
+            rubrics={0: "Wrong", 1: "Partial", 2: "Correct"},
+            async_mode=False,
+            include_reason=False,
+        )
+        monkeypatch.setattr(
+            metric,
+            "_get_sync_client",
+            lambda: _build_sync_client("2"),
+        )
+
+        metric.measure(_test_case())
+        assert metric.reason is None
+
+    def test_tagged_judge_output_with_patterns(self, monkeypatch):
+        metric = PolluxJudgeMetric(
+            criteria_name="Correctness",
+            rubrics={0: "Wrong", 1: "Partial", 2: "Correct"},
+            async_mode=False,
+            score_pattern=POLLUX_TAGGED_SCORE_RE,
+            feedback_pattern=POLLUX_TAGGED_FEEDBACK_RE,
+        )
+        monkeypatch.setattr(
+            metric,
+            "_get_sync_client",
             lambda: _build_sync_client(
                 "[FEEDBACK] good answer [RESULT] 2 [END]"
             ),
@@ -87,7 +124,6 @@ class TestPolluxJudgeMetric:
 
         assert score == 1.0
         assert metric.reason == "good answer"
-        assert metric.is_successful()
 
     def test_non_zero_based_rubric_normalization(self, monkeypatch):
         metric = PolluxJudgeMetric(
@@ -98,15 +134,13 @@ class TestPolluxJudgeMetric:
         monkeypatch.setattr(
             metric,
             "_get_sync_client",
-            lambda: _build_sync_client(
-                "[FEEDBACK] middle score [RESULT] 2 [END]"
-            ),
+            lambda: _build_sync_client("2"),
         )
 
         score = metric.measure(_test_case())
 
         assert score == 0.5
-        assert metric.reason == "middle score"
+        assert metric.reason == ""
 
     def test_normalize_score_false_returns_raw(self, monkeypatch):
         metric = PolluxJudgeMetric(
@@ -118,7 +152,7 @@ class TestPolluxJudgeMetric:
         monkeypatch.setattr(
             metric,
             "_get_sync_client",
-            lambda: _build_sync_client("[RESULT] 2 [END]"),
+            lambda: _build_sync_client("2"),
         )
 
         score = metric.measure(_test_case())
@@ -183,13 +217,13 @@ class TestPolluxJudgeMetric:
         monkeypatch.setattr(
             metric,
             "_get_async_client",
-            lambda: _build_async_client("[FEEDBACK] async ok [RESULT] 1 [END]"),
+            lambda: _build_async_client("1"),
         )
 
         score = await metric.a_measure(_test_case())
 
         assert score == 0.5
-        assert metric.reason == "async ok"
+        assert metric.reason == ""
 
 
 @pytest.mark.skipif(
@@ -197,13 +231,23 @@ class TestPolluxJudgeMetric:
     reason="POLLUX_BASE_URL is not set",
 )
 def test_integration_with_real_endpoint():
+    kwargs = {}
+    if os.getenv("POLLUX_USE_TAGGED_JUDGE_OUTPUT", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        kwargs["score_pattern"] = POLLUX_TAGGED_SCORE_RE
+        kwargs["feedback_pattern"] = POLLUX_TAGGED_FEEDBACK_RE
+
     metric = PolluxJudgeMetric(
         criteria_name="Correctness",
         rubrics={0: "Wrong", 1: "Partial", 2: "Correct"},
-        judge_model=os.getenv("POLLUX_MODEL", "ai-forever/pollux-judge-7b"),
+        judge_model=os.getenv("POLLUX_MODEL", "ai-forever/Pollux-4B-Judge"),
         base_url=os.getenv("POLLUX_BASE_URL"),
         api_key=os.getenv("POLLUX_API_KEY", "NONE"),
         async_mode=False,
+        **kwargs,
     )
 
     score = metric.measure(

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Tuple, Union
+from typing import Dict, Pattern, Tuple, Union
 
 RubricsInput = Dict[Union[int, str], str]
 
-_RESULT_RE = re.compile(
+POLLUX_DEFAULT_SCORE_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$")
+
+POLLUX_DEFAULT_FEEDBACK_RE: Pattern[str] | None = None
+
+POLLUX_TAGGED_SCORE_RE = re.compile(
     r"\[RESULT\]\s*([^\s\[]+)\s*\[END\]", re.IGNORECASE | re.DOTALL
 )
-_FEEDBACK_RE = re.compile(
+POLLUX_TAGGED_FEEDBACK_RE = re.compile(
     r"\[FEEDBACK\](.*?)\[RESULT\]", re.IGNORECASE | re.DOTALL
 )
 
@@ -37,11 +41,12 @@ def build_pollux_prompt(
     return "\n\n".join(sections)
 
 
-def parse_score(response: str) -> float | None:
+def parse_score(response: str, pattern: Pattern[str] | None = None) -> float | None:
     if not response:
         return None
 
-    match = _RESULT_RE.search(response)
+    effective = pattern if pattern is not None else POLLUX_DEFAULT_SCORE_RE
+    match = effective.search(response)
     if not match:
         return None
 
@@ -52,11 +57,16 @@ def parse_score(response: str) -> float | None:
         return None
 
 
-def parse_feedback(response: str) -> str:
+def parse_feedback(response: str, pattern: Pattern[str] | None = None) -> str:
+    """Extract feedback (default: :data:`POLLUX_DEFAULT_FEEDBACK_RE` — no extraction)."""
     if not response:
         return ""
 
-    match = _FEEDBACK_RE.search(response)
+    effective = pattern if pattern is not None else POLLUX_DEFAULT_FEEDBACK_RE
+    if effective is None:
+        return ""
+
+    match = effective.search(response)
     return match.group(1).strip() if match else ""
 
 

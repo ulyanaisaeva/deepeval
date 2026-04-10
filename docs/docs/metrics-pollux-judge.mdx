@@ -28,11 +28,11 @@ with an OpenAI-compatible API (for example, vLLM):
 
 ```bash
 pip install vllm
-vllm serve ai-forever/pollux-judge-7b --port 8888
+vllm serve ai-forever/Pollux-4B-Judge --port 8000
 ```
 
 Then point the metric to your local endpoint:
-- `base_url="http://localhost:8888/v1"`
+- `base_url="http://localhost:8000/v1"`
 - `api_key="NONE"` for local unauthenticated serving
 
 ## Usage
@@ -49,8 +49,8 @@ metric = PolluxJudgeMetric(
         1: "Partially correct answer.",
         2: "Fully correct answer.",
     },
-    judge_model="ai-forever/pollux-judge-7b",
-    base_url="http://localhost:8888/v1",  # OpenAI-compatible endpoint
+    judge_model="ai-forever/Pollux-4B-Judge",
+    base_url="http://localhost:8000/v1",  # OpenAI-compatible endpoint
     api_key="NONE",
     threshold=0.5,
     normalize_score=True,
@@ -73,9 +73,9 @@ evaluate(test_cases=[test_case], metrics=[metric])
 - `rubrics` (required): Dictionary score-to-description, for example
   `{0: "...", 1: "...", 2: "..."}`.
 - `judge_model` (optional): Judge model id, default
-  `ai-forever/pollux-judge-7b`.
+  `ai-forever/Pollux-4B-Judge`.
 - `base_url` (optional): OpenAI-compatible endpoint URL, default
-  `http://localhost:8888/v1`.
+  `http://localhost:8000/v1`.
 - `api_key` (optional): API key for the endpoint, default `"NONE"`.
 - `max_tokens` (optional): Max completion tokens from the judge.
 - `temperature` (optional): Judge sampling temperature.
@@ -92,6 +92,33 @@ evaluate(test_cases=[test_case], metrics=[metric])
   `a_measure()`.
 - `verbose_mode` (optional): If `True`, stores intermediate logs in
   `metric.verbose_logs`.
+- `score_pattern` (optional): Regex with one capture group for the numeric
+  score. Default expects a **plain numeric** response (optional whitespace),
+  e.g. `2` or `\n\n2` (same as `POLLUX_DEFAULT_SCORE_RE` in `deepeval.metrics.pollux`).
+  For judges that return tagged output, pass
+  `POLLUX_TAGGED_SCORE_RE` from `deepeval.metrics.pollux`.
+- `feedback_pattern` (optional): Regex with one capture group for feedback.
+  Default ``None`` — no feedback (`metric.reason` is empty when `include_reason=True`; same semantics as :data:`POLLUX_DEFAULT_FEEDBACK_RE`).
+  For tagged judges, pass `POLLUX_TAGGED_FEEDBACK_RE` from `deepeval.metrics.pollux`.
+
+### Tagged judge output (legacy format)
+
+If your judge returns `[FEEDBACK] ... [RESULT] <score> [END]`, use:
+
+```python
+from deepeval.metrics.pollux import (
+    PolluxJudgeMetric,
+    POLLUX_TAGGED_FEEDBACK_RE,
+    POLLUX_TAGGED_SCORE_RE,
+)
+
+metric = PolluxJudgeMetric(
+    criteria_name="Correctness",
+    rubrics={0: "Wrong", 1: "Partial", 2: "Correct"},
+    score_pattern=POLLUX_TAGGED_SCORE_RE,
+    feedback_pattern=POLLUX_TAGGED_FEEDBACK_RE,
+)
+```
 
 ## As a Standalone
 
@@ -109,8 +136,8 @@ print(metric.score, metric.reason, metric.success)
    - `criteria_name`
    - normalized rubric text
 2. Send prompt to OpenAI-compatible chat completions API.
-3. Parse score from `[RESULT] ... [END]`.
-4. Parse feedback from `[FEEDBACK] ... [RESULT]`.
+3. Parse score using `score_pattern` (default: entire response is one number).
+4. Parse feedback using `feedback_pattern` (default: no feedback).
 5. Set final score:
    - normalized score `(score - min_key) / (max_key - min_key)` if
      `normalize_score=True` (clamped to `[0.0, 1.0]`)

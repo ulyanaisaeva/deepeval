@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from re import Pattern
 from typing import List
 
 from openai import AsyncOpenAI, OpenAI
@@ -32,8 +33,8 @@ class PolluxJudgeMetric(BaseMetric):
         criteria_name: str,
         rubrics: dict[int | str, str],
         *,
-        judge_model: str = "ai-forever/pollux-judge-7b",
-        base_url: str = "http://localhost:8888/v1",
+        judge_model: str = "ai-forever/Pollux-4B-Judge",
+        base_url: str = "http://localhost:8000/v1",
         api_key: str = "NONE",
         max_tokens: int = 1024,
         temperature: float = 0.1,
@@ -43,6 +44,8 @@ class PolluxJudgeMetric(BaseMetric):
         strict_mode: bool = False,
         async_mode: bool = True,
         verbose_mode: bool = False,
+        score_pattern: Pattern[str] | None = None,
+        feedback_pattern: Pattern[str] | None = None,
     ):
         if max_tokens <= 0:
             raise ValueError("max_tokens must be a positive integer")
@@ -51,19 +54,25 @@ class PolluxJudgeMetric(BaseMetric):
 
         rubrics_text, rubric_keys = normalize_rubrics(rubrics)
 
-        self._criteria_name = criteria_name
-        self._rubrics_text = rubrics_text
-        self._rubric_keys = rubric_keys
-        self._judge_model = judge_model
-        self._base_url = base_url
-        self._api_key = api_key
-        self._max_tokens = max_tokens
-        self._temperature = temperature
-        self._normalize_score_enabled = normalize_score
+        # Public names must match __init__ parameters so deepeval.metrics.utils.copy_metrics
+        # can reconstruct this metric during evaluate() / async runs.
+        self.criteria_name = criteria_name
+        self.rubrics = rubrics
+        self.judge_model = judge_model
+        self.base_url = base_url
+        self.api_key = api_key
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.normalize_score = normalize_score
         self.include_reason = include_reason
         self.strict_mode = strict_mode
         self.async_mode = async_mode
         self.verbose_mode = verbose_mode
+        self.score_pattern = score_pattern
+        self.feedback_pattern = feedback_pattern
+
+        self._rubrics_text = rubrics_text
+        self._rubric_keys = rubric_keys
 
         if strict_mode:
             self.threshold = (
@@ -79,19 +88,19 @@ class PolluxJudgeMetric(BaseMetric):
     def _get_sync_client(self) -> OpenAI:
         if self._sync_client is None:
             self._sync_client = OpenAI(
-                base_url=self._base_url, api_key=self._api_key
+                base_url=self.base_url, api_key=self.api_key
             )
         return self._sync_client
 
     def _get_async_client(self) -> AsyncOpenAI:
         if self._async_client is None:
             self._async_client = AsyncOpenAI(
-                base_url=self._base_url, api_key=self._api_key
+                base_url=self.base_url, api_key=self.api_key
             )
         return self._async_client
 
     def _normalize_pollux_score(self, raw_score: float) -> float:
-        if not self._normalize_score_enabled:
+        if not self.normalize_score:
             return raw_score
 
         min_key = float(self._rubric_keys[0])
@@ -172,21 +181,21 @@ class PolluxJudgeMetric(BaseMetric):
             prompt = build_pollux_prompt(
                 instruction=instruction,
                 answer=answer,
-                criteria_name=self._criteria_name,
+                criteria_name=self.criteria_name,
                 rubrics=self._rubrics_text,
                 reference_answer=reference_answer,
             )
 
             try:
                 resp = self._get_sync_client().chat.completions.create(
-                    model=self._judge_model,
+                    model=self.judge_model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
                 )
                 raw = resp.choices[0].message.content or ""
-                raw_score = parse_score(raw)
-                feedback = parse_feedback(raw)
+                raw_score = parse_score(raw, pattern=self.score_pattern)
+                feedback = parse_feedback(raw, pattern=self.feedback_pattern)
                 if raw_score is None:
                     self.error = (
                         "Failed to parse score from judge response: "
@@ -237,21 +246,21 @@ class PolluxJudgeMetric(BaseMetric):
             prompt = build_pollux_prompt(
                 instruction=instruction,
                 answer=answer,
-                criteria_name=self._criteria_name,
+                criteria_name=self.criteria_name,
                 rubrics=self._rubrics_text,
                 reference_answer=reference_answer,
             )
 
             try:
                 resp = await self._get_async_client().chat.completions.create(
-                    model=self._judge_model,
+                    model=self.judge_model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
                 )
                 raw = resp.choices[0].message.content or ""
-                raw_score = parse_score(raw)
-                feedback = parse_feedback(raw)
+                raw_score = parse_score(raw, pattern=self.score_pattern)
+                feedback = parse_feedback(raw, pattern=self.feedback_pattern)
                 if raw_score is None:
                     self.error = (
                         "Failed to parse score from judge response: "
